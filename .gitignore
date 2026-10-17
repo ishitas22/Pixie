@@ -1,0 +1,10 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.expo/
+dist/
+.env
+.env.*
+!.env.example
+backend/data/
