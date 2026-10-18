@@ -8,3 +8,6 @@ dist/
 .env.*
 !.env.example
 backend/data/
+secrets/
+*.key
+*.pem
