@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
-from app import database, extractor, images, ocr, similarity
+from app import database, extractor, images, ocr, qr, similarity
 from app.calendar_view import date_needs_review, deadline_day, is_task_overdue, split_task_calendar
 from app.config import DEFAULT_TIMEZONE, MAX_IMAGE_BYTES, frontend_origins, image_dir
 from app.dates import local_today, normalize_user_time, resolve_timezone_name, visible_urls
@@ -43,6 +43,7 @@ from app.schemas import (
     ReviewStatus,
     ScreenshotDetail,
     optional_category,
+    QrCodeOut,
     ScreenshotOut,
     ServiceState,
     TaskCreate,
@@ -152,6 +153,8 @@ def task_out(row: dict) -> TaskOut:
         ),
         date_ambiguous=bool(row.get("date_ambiguous")),
         event_date=stored_date(row.get("event_date")),
+        link_url=row.get("link_url") or None,
+        link_label=row.get("link_label") or None,
     )
 
 
@@ -198,10 +201,37 @@ def item_out(row: dict) -> ItemOut:
     )
 
 
+def qr_code_out(record: dict) -> QrCodeOut:
+    payload = record.get("payload") or ""
+    readable = bool(record.get("readable"))
+    clickable = readable and qr.is_clickable_link(payload)
+    return QrCodeOut(
+        id=record["id"],
+        payload=payload,
+        readable=readable,
+        is_url=clickable,
+        domain=qr.link_label(payload) if clickable else None,
+    )
+
+
+def _store_qr(screenshot_id: str, stored_name: str) -> None:
+    """Read QR codes from the saved image. Failure leaves OCR and tasks alone."""
+    try:
+        codes = qr.scan_image(image_dir() / stored_name)
+        database.replace_qr_codes(
+            screenshot_id,
+            [(code.payload, code.readable) for code in codes],
+        )
+    except Exception:
+        logger.exception("QR scan failed screenshot=%s", screenshot_id)
+
+
 def screenshot_detail(row: dict) -> ScreenshotDetail:
     locked = bool(row.get("approved_at")) or any(
         item.get("review_status") == "confirmed" for item in row.get("items") or []
     )
+    records = database.list_qr_codes(row["id"])
+    codes = [qr_code_out(record) for record in records]
     return ScreenshotDetail(
         id=row["id"],
         filename=row["original_filename"],
@@ -211,6 +241,8 @@ def screenshot_detail(row: dict) -> ScreenshotDetail:
         processing_status=row.get("processing_status") or "ready",
         extraction_error=row.get("extraction_error"),
         visible_urls=visible_urls(row.get("ocr_text") or ""),
+        qr_codes=codes,
+        qr_note=qr.UNREADABLE_NOTE if any(not code.readable for code in codes) else None,
         display_title=row.get("display_title"),
         draft_title=row.get("draft_title"),
         category=optional_category(row.get("category")),
@@ -391,9 +423,11 @@ def import_screenshot(file: UploadFile = File(...)) -> ImportResponse:
         text = ocr.extract_text(image_dir() / row["stored_name"])
         database.update_ocr(row["id"], text)
         row["ocr_text"] = text
+        _store_qr(row["id"], row["stored_name"])
     except ocr.OcrEngineError as exc:
         if row is not None:
             database.set_processing(row["id"], "ocr_failed", str(exc))
+            _store_qr(row["id"], row["stored_name"])
         shot = load_detail(row["id"]) if row else None
         matches = similarity_matches(row["id"], digest) if row is not None else []
         raise ApiError(500, "ocr_failed", str(exc), shot, matches) from exc
@@ -431,8 +465,13 @@ def _interpret(screenshot_id: str) -> ImportResponse:
         message = "No readable text found in this screenshot. Try a clearer image, or add an item yourself."
         database.set_processing(screenshot_id, "no_text", message)
         raise ApiError(422, "no_readable_text", message, load_detail(screenshot_id))
+    payloads = [
+        record["payload"]
+        for record in database.list_qr_codes(screenshot_id)
+        if record.get("readable") and record.get("payload")
+    ]
     try:
-        outcome = extractor.extract_items(text)
+        outcome = extractor.extract_items(text, payloads)
     except extractor.OllamaUnavailable as exc:
         database.set_processing(screenshot_id, "model_failed", str(exc))
         raise ApiError(503, "ollama_unavailable", str(exc), load_detail(screenshot_id)) from exc
@@ -483,6 +522,7 @@ def reanalyze_screenshot(screenshot_id: str) -> ImportResponse:
     try:
         text = ocr.extract_text(image_file(row["stored_name"]))
     except ocr.OcrEngineError as exc:
+        _store_qr(screenshot_id, row["stored_name"])
         database.set_processing(screenshot_id, "ocr_failed", str(exc))
         raise ApiError(500, "ocr_failed", str(exc), load_detail(screenshot_id)) from exc
     if not ocr.has_readable_text(text):
@@ -490,6 +530,7 @@ def reanalyze_screenshot(screenshot_id: str) -> ImportResponse:
         database.set_processing(screenshot_id, "no_text", message)
         raise ApiError(422, "no_readable_text", message, load_detail(screenshot_id))
     database.update_ocr(screenshot_id, text)
+    _store_qr(screenshot_id, row["stored_name"])
     database.set_processing(screenshot_id, "ocr_complete", None)
     logger.info("OCR completed screenshot=%s characters=%s", screenshot_id, len(text))
     return _finish_import(screenshot_id, None)
@@ -662,6 +703,11 @@ def approve_screenshot(screenshot_id: str, body: ApproveRequest) -> ImportRespon
             ambiguities=body.ambiguities,
             task_ids=body.task_ids,
             task_titles={edit.id: edit.title for edit in body.tasks if edit.title},
+            task_links={
+                edit.id: (edit.link_url, edit.link_label or "Link from QR code.")
+                for edit in body.tasks
+                if edit.link_url
+            },
         )
     except KeyError as exc:
         raise ApiError(404, "not_found", "That screenshot could not be found.") from exc

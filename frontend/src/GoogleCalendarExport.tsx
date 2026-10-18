@@ -206,18 +206,18 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   link: {
-    color: "#0f6e56",
+    color: "#69509A",
     fontWeight: "700",
   },
   button: {
     alignSelf: "flex-start",
-    backgroundColor: "#0f6e56",
+    backgroundColor: "#FF80BD",
     borderRadius: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
   },
   buttonLabel: {
-    color: "#fffdf8",
+    color: "#30283F",
     fontWeight: "700",
   },
   pressed: {

@@ -7,8 +7,10 @@ import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 're
 import type { Category } from '../types/api';
 import { usePixie } from '../state/PixieProvider';
 import { categories, theme } from '../theme';
-export function AppShell({ children, selected = 'all', onCategory, counts = {} }: PropsWithChildren<{ selected?: Category | 'all'; onCategory?: (category: Category | 'all') => void; counts?: Partial<Record<Category | 'all', number>> }>) {
-  const { pickScreenshot, ready, upload, storageWarning } = usePixie();
+import { collectionCounts } from '../utils/gallery';
+export function AppShell({ children, selected = 'all', onCategory }: PropsWithChildren<{ selected?: Category | 'all'; onCategory?: (category: Category | 'all') => void }>) {
+  const { pickScreenshot, ready, upload, storageWarning, state } = usePixie();
+  const counts = collectionCounts(state.items, state.drafts);
   const wide = useWindowDimensions().width >= 900;
   const [collapsed, setCollapsed] = useState(false);
   const iconsOnly = wide && collapsed;

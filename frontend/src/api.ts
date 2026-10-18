@@ -93,7 +93,25 @@ function toScreenshot(value: unknown): Screenshot | undefined {
     createdAt: typeof value.created_at === "string" ? value.created_at : "",
     processingStatus: typeof value.processing_status === "string" ? value.processing_status : "ready",
     extractionError: typeof value.extraction_error === "string" ? value.extraction_error : null,
+    qrCodes: Array.isArray(value.qr_codes) ? value.qr_codes.flatMap(toQrCode) : [],
+    qrNote: typeof value.qr_note === "string" ? value.qr_note : null,
   };
+}
+
+function toQrCode(value: unknown) {
+  if (!isRecord(value) || typeof value.id !== "string") {
+    return [];
+  }
+  const payload = textOrEmpty(value.payload);
+  return [
+    {
+      id: value.id,
+      payload,
+      readable: Boolean(value.readable),
+      isUrl: Boolean(value.is_url),
+      domain: typeof value.domain === "string" ? value.domain : null,
+    },
+  ];
 }
 
 function toItemTask(value: unknown): ItemTask {
@@ -112,6 +130,8 @@ function toItemTask(value: unknown): ItemTask {
     kind: value.kind === "suggestion" ? "suggestion" : "explicit",
     dateAmbiguous: Boolean(value.date_ambiguous),
     completed: Boolean(value.completed),
+    linkUrl: textOrEmpty(value.link_url),
+    linkLabel: textOrEmpty(value.link_label),
   };
 }
 
@@ -538,7 +558,7 @@ export async function approveScreenshot(
     category: Category;
     summary?: string | null;
     taskIds: string[];
-    tasks?: { id: string; title: string }[];
+    tasks?: { id: string; title: string; linkUrl?: string | null; linkLabel?: string | null }[];
     items?: {
       id: string;
       title?: string;
@@ -559,7 +579,12 @@ export async function approveScreenshot(
         category: body.category,
         summary: body.summary ?? null,
         task_ids: body.taskIds,
-        tasks: (body.tasks ?? []).map((task) => ({ id: task.id, title: task.title })),
+        tasks: (body.tasks ?? []).map((task) => ({
+          id: task.id,
+          title: task.title,
+          link_url: task.linkUrl || null,
+          link_label: task.linkLabel || null,
+        })),
         items: (body.items ?? []).map((item) => ({
           id: item.id,
           title: item.title ?? null,

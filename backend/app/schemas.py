@@ -66,6 +66,8 @@ class ExtractedTask(BaseModel):
     deadline_text: str | None = None
     kind: ActionKind = ActionKind.EXPLICIT
     date_ambiguous: bool = False
+    link_url: str | None = None
+    link_label: str | None = None
 
 
 class ExtractedItem(BaseModel):
@@ -124,6 +126,14 @@ class AcceptTask(BaseModel):
         return value
 
 
+class QrCodeOut(BaseModel):
+    id: str
+    payload: str
+    readable: bool
+    is_url: bool = False
+    domain: str | None = None
+
+
 class ScreenshotOut(BaseModel):
     id: str
     filename: str
@@ -133,6 +143,8 @@ class ScreenshotOut(BaseModel):
     processing_status: str = "ready"
     extraction_error: str | None = None
     visible_urls: list[str] = Field(default_factory=list)
+    qr_codes: list[QrCodeOut] = Field(default_factory=list)
+    qr_note: str | None = None
     display_title: str | None = None
     draft_title: str | None = None
     category: Category | None = None
@@ -185,6 +197,8 @@ class TaskOut(BaseModel):
     source_title: str = "Untitled screenshot"
     date_ambiguous: bool = False
     event_date: date | None = None
+    link_url: str | None = None
+    link_label: str | None = None
 
 
 class ItemOut(BaseModel):
@@ -273,6 +287,8 @@ class ApproveItem(BaseModel):
 class ApproveTaskEdit(BaseModel):
     id: str
     title: str | None = None
+    link_url: str | None = None
+    link_label: str | None = None
 
     @field_validator("title", mode="before")
     @classmethod

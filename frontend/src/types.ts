@@ -12,6 +12,14 @@ export type TaskStatus = "suggested" | "accepted" | "discarded";
 export type ActionKind = "explicit" | "suggestion";
 export type RegistrationStatus = "unknown" | "registered" | "not_registered";
 
+export type QrCode = {
+  id: string;
+  payload: string;
+  readable: boolean;
+  isUrl: boolean;
+  domain: string | null;
+};
+
 export type Screenshot = {
   id: string;
   filename: string;
@@ -27,6 +35,8 @@ export type Screenshot = {
   createdAt: string;
   processingStatus: string;
   extractionError: string | null;
+  qrCodes: QrCode[];
+  qrNote: string | null;
 };
 
 export type ItemTask = {
@@ -40,6 +50,8 @@ export type ItemTask = {
   kind: ActionKind;
   dateAmbiguous: boolean;
   completed: boolean;
+  linkUrl: string;
+  linkLabel: string;
 };
 
 export type SavedItem = {

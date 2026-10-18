@@ -2,9 +2,11 @@ import { Text, Link } from '../components/Typography';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Image, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { AppShell } from '../components/AppShell';
 import { AgendaCard } from '../components/AgendaCard';
+import { DaySnap } from '../components/DaySnap';
+import { DropSurface } from '../components/DropSurface';
 import { usePixie } from '../state/PixieProvider';
 import { categoryInfo, theme } from '../theme';
 import type { Category } from '../types/api';
@@ -15,16 +17,16 @@ export default function Dashboard() {
   const setCategory = (next: Category | 'all') => router.setParams({ category: next });
   const [today, setToday] = useState(() => localDate(new Date()));
   useEffect(() => { const timer = setInterval(() => setToday(localDate(new Date())), 30000); return () => clearInterval(timer); }, []);
-  const { state: data, ready, upload, pickScreenshot, completeTask } = usePixie();
+  const { state: data, ready, upload, pickScreenshot, ingestFiles, completeTask } = usePixie();
   const agenda = getAgenda(data.items, today, category);
   const tasks = pendingTasks(data.items, category);
   const drafts = data.drafts.filter(draft => category === 'all' || draft.item.category === category);
-  const counts = Object.fromEntries(['all', 'campus_events', 'career', 'extracurriculars', 'personal', 'other'].map(id => [id, data.items.filter(item => id === 'all' || item.category === id).length]));
   const { width } = useWindowDimensions();
   const wide = width >= 1150;
   const date = displayDate(today);
-  return <AppShell selected={category} onCategory={setCategory} counts={counts}>
-    <View style={s.hero}>
+  return <AppShell selected={category} onCategory={setCategory}>
+    {!ready ? <ActivityIndicator accessibilityLabel="Loading your collection" color={theme.colors.purple} style={{ marginBottom: 16 }} /> : null}
+    <DropSurface label="upload or drag and drop image here" disabled={!ready || upload.busy} onFiles={files => void ingestFiles(files)} style={s.hero} activeStyle={{ borderColor: theme.colors.lavender, borderWidth: 2 }}>
       <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill}>
         <View style={[s.doodle, { left: '9%', top: 25 }]}><Ionicons name="sparkles" size={38} color={theme.colors.pink} /></View>
         <View style={[s.doodle, { right: '10%', top: 30 }]}><Ionicons name="star-outline" size={33} color="#9071CC" /></View>
@@ -33,14 +35,15 @@ export default function Dashboard() {
       </View>
       <Text role="heading" aria-level={1} style={[s.heroWordmark, width < 600 && { fontSize: 60, lineHeight: 76 }]}>Pixie<Text style={{ color: '#DC4F95', fontSize: 35 }}>✦</Text></Text>
       <Text style={s.heroTagline}>A little magic for your camera roll</Text>
-      <Pressable accessibilityRole="button" disabled={!ready || upload.busy} onPress={pickScreenshot} style={s.heroButton}><Ionicons name="add" size={18} color={theme.colors.ink} /><Text style={s.heroButtonText}>Upload your screenshots</Text></Pressable>
-    </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="upload or drag and drop image here" disabled={!ready || upload.busy} onPress={pickScreenshot} style={s.heroButton}><Ionicons name="add" size={18} color={theme.colors.ink} /><Text style={s.heroButtonText}>upload or drag and drop image here</Text></Pressable>
+    </DropSurface>
     {saved && data.items.some(item => item.id === saved) && <View style={{ padding: 14, backgroundColor: '#D1F6F1', borderRadius: 12, marginBottom: 18 }}><Text style={{ color: '#226C65', fontSize: 13 }}>Saved to your collection! {data.items.find(item => item.id === saved)?.title}</Text><Link href={{ pathname: '/items/[id]', params: { id: saved } }} style={{ color: theme.colors.purple, marginTop: 8 }}>View saved screenshot →</Link></View>}
     <Text style={s.dateLabel}>{date}</Text>
     {category !== 'all' && <View style={s.filterRow}><Text style={s.subtitle}>Showing {categoryInfo(category).label}</Text><Pressable onPress={() => setCategory('all')} accessibilityRole="button"><Text style={{ color: theme.colors.green, fontSize: 12 }}>Clear filter ×</Text></Pressable></View>}
     <View style={{ flexDirection: wide ? 'row' : 'column', gap: 30, alignItems: 'flex-start' }}>
       <View style={{ flex: 1, width: '100%', minWidth: 0 }}>
         <SectionTitle title="Today" count={agenda.today.length} />
+        <DaySnap items={data.items} today={today} category={category} />
         <AgendaGrid entries={agenda.today} today />
         <View style={{ height: 24 }} />
         <SectionTitle title="Upcoming" count={agenda.upcoming.length} />
@@ -51,14 +54,14 @@ export default function Dashboard() {
         <View style={[s.reviewHeader, { marginBottom: 18 }]}><Text role="heading" aria-level={2} style={s.reviewTitle}>Needs Review</Text><View style={s.reviewCount}><Text style={{ color: '#79551B', fontSize: 11 }}>{drafts.length}</Text></View></View>
         {drafts.map((draft, index) => <Link key={draft.draft_id} href={{ pathname: '/confirmation/[id]', params: { id: draft.draft_id } }} asChild><Pressable style={s.reviewCard}>
           {data.images[draft.image_url] ? <Image source={{ uri: data.images[draft.image_url].uri }} accessibilityLabel={`Screenshot awaiting review: ${draft.item.title}`} resizeMode="contain" style={{ height: 145, width: '100%', backgroundColor: '#F0E9FF' }} /> : <View style={[s.poster, { backgroundColor: index % 2 === 0 ? '#FFF0BB' : '#EAE0FF' }]}><Text style={s.posterKicker}>SOMETHING WORTH DISCOVERING</Text><Ionicons name={index % 2 === 0 ? 'flower-outline' : 'planet-outline'} size={40} color={index % 2 === 0 ? '#846327' : '#8060B4'} /><Text style={s.posterTitle}>{draft.item.title || 'Untitled screenshot'}</Text><Text style={s.posterCaption}>PIXIE COLLECTION  /  0{index + 1}</Text></View>}
-          <View style={{ padding: 15, gap: 8 }}><Text style={s.reviewItemTitle}>{draft.item.title || 'Untitled screenshot'}</Text><Text style={s.reviewHint}>Demo draft · waiting for you</Text><View style={s.reviewLink}><Text style={{ fontSize: 12, fontWeight: '600', color: '#78658E' }}>Review details</Text><Ionicons name="arrow-forward" size={15} color="#78658E" /></View></View>
+          <View style={{ padding: 15, gap: 8 }}><Text style={s.reviewItemTitle}>{draft.item.title || 'Untitled screenshot'}</Text><Text style={s.reviewHint}>{draft.processing_status && draft.processing_status !== 'ready' ? 'Could not interpret · open to retry' : 'Waiting for your review'}</Text><View style={s.reviewLink}><Text style={{ fontSize: 12, fontWeight: '600', color: '#78658E' }}>Review details</Text><Ionicons name="arrow-forward" size={15} color="#78658E" /></View></View>
         </Pressable></Link>)}
         {drafts.length === 0 && <View style={{ minHeight: 230, justifyContent: 'center', alignItems: 'center', padding: 18 }}><Text style={{ fontSize: 19, lineHeight: 29, textAlign: 'center', fontWeight: '600', color: theme.colors.ink }}>All clear here! No drafts in this category.</Text></View>}
         
       </View>
     </View>
     {data.items.some(item => data.images[item.image_url] && (category === 'all' || item.category === category)) && <View style={{ marginTop: 30, gap: 12 }}><Text role="heading" aria-level={2} style={s.sectionTitle}>Your saved screenshots</Text>{data.items.filter(item => data.images[item.image_url] && (category === 'all' || item.category === category)).map(item => <Link key={item.id} href={{ pathname: '/items/[id]', params: { id: item.id } }} style={{ padding: 16, backgroundColor: 'white', borderRadius: 12, borderWidth: 1, borderColor: theme.colors.line, color: theme.colors.purple }}>{item.title} · {categoryInfo(item.category).label} →</Link>)}</View>}
-    <View style={s.bottom}><Text style={s.demo}>Demo collection · stored locally</Text></View>
+    <View style={s.bottom}><Text style={s.demo}>Stored on this computer</Text></View>
   </AppShell>;
 }
 function SectionTitle({ title, count }: { title: string; count: number }) { return <View style={s.section}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}><Text role="heading" aria-level={2} style={s.sectionTitle}>{title}</Text><Text style={s.sectionCount}>{count}</Text></View></View>; }
@@ -67,7 +70,7 @@ function AgendaGrid({ entries, today = false }: { entries: AgendaEntry[]; today?
   return <View style={s.grid}>{entries.map(entry => <View key={entry.key} style={{ width: columns === 2 ? '48.5%' : '100%', alignSelf: 'stretch' }}><AgendaCard entry={entry} today={today} /></View>)}{entries.length === 0 && <View style={s.emptyBox}><Ionicons name="leaf-outline" size={25} color="#85936A" /><Text style={s.empty}>{today ? 'A little breathing room. Nothing due today.' : 'No upcoming dates in this category yet.'}</Text></View>}</View>;
 }
 const s = StyleSheet.create({
-  hero: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7EFFF', borderWidth: 1, borderColor: '#EBDDFA', borderRadius: 26, paddingHorizontal: 18, paddingVertical: 20, marginBottom: 20, gap: 9 },
+  hero: { position: 'relative', overflow: 'hidden', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(214, 196, 245, 0.72)', borderWidth: 1, borderColor: '#EBDDFA', borderRadius: 26, paddingHorizontal: 18, paddingVertical: 20, marginBottom: 20, gap: 9 },
   doodle: { position: 'absolute', opacity: 0.8 },
   heroWordmark: { fontSize: 84, lineHeight: 104, fontWeight: '700', letterSpacing: 3, color: theme.colors.ink, fontFamily: 'PixieWordmark' },
   heroTagline: { fontSize: 17, lineHeight: 24, textAlign: 'center', color: '#63516F', fontWeight: '500' },

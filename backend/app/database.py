@@ -98,8 +98,18 @@ CREATE TABLE IF NOT EXISTS tasks (
     CHECK (status IN ('suggested', 'accepted', 'discarded'))
 );
 
+CREATE TABLE IF NOT EXISTS qr_codes (
+    id TEXT PRIMARY KEY,
+    screenshot_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    readable INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (screenshot_id) REFERENCES screenshots(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_screenshot ON tasks(screenshot_id);
 CREATE INDEX IF NOT EXISTS idx_items_screenshot ON items(screenshot_id);
+CREATE INDEX IF NOT EXISTS idx_qr_screenshot ON qr_codes(screenshot_id);
 """
 
 TASK_SELECT = """
@@ -126,7 +136,9 @@ SELECT
     s.draft_title,
     s.approved_at,
     i.title AS item_title,
-    e.event_date AS event_date
+    e.event_date AS event_date,
+    t.link_url,
+    t.link_label
 FROM tasks t
 JOIN screenshots s ON s.id = t.screenshot_id
 LEFT JOIN items i ON i.id = t.item_id
@@ -241,7 +253,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "tasks", "kind", "TEXT NOT NULL DEFAULT 'explicit'")
     _add_column(conn, "tasks", "date_ambiguous", "INTEGER NOT NULL DEFAULT 0")
     _add_column(conn, "events", "end_date", "TEXT")
+    _add_column(conn, "tasks", "link_url", "TEXT")
+    _add_column(conn, "tasks", "link_label", "TEXT")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS qr_codes (
+            id TEXT PRIMARY KEY,
+            screenshot_id TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            readable INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (screenshot_id) REFERENCES screenshots(id)
+        )
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_item ON tasks(item_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_qr_screenshot ON qr_codes(screenshot_id)")
     conn.execute(
         """
         UPDATE screenshots
@@ -372,6 +399,7 @@ def delete_screenshot(screenshot_id: str) -> dict | None:
             item["id"]
             for item in conn.execute("SELECT id FROM items WHERE screenshot_id = ?", (screenshot_id,))
         ]
+        conn.execute("DELETE FROM qr_codes WHERE screenshot_id = ?", (screenshot_id,))
         conn.execute("DELETE FROM tasks WHERE screenshot_id = ?", (screenshot_id,))
         if item_ids:
             marks = ", ".join("?" for _ in item_ids)
@@ -482,8 +510,9 @@ def _insert_extracted(conn: sqlite3.Connection, screenshot_id: str, item: Extrac
             """
             INSERT INTO tasks (
                 id, screenshot_id, item_id, title, details, category, deadline, due_time,
-                supporting_text, deadline_text, kind, date_ambiguous, status, completed, created_at, completed_at
-            ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'suggested', 0, ?, NULL)
+                supporting_text, deadline_text, kind, date_ambiguous, status, completed, created_at, completed_at,
+                link_url, link_label
+            ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'suggested', 0, ?, NULL, ?, ?)
             """,
             (
                 new_id(),
@@ -498,6 +527,8 @@ def _insert_extracted(conn: sqlite3.Connection, screenshot_id: str, item: Extrac
                 task.kind.value,
                 1 if task.date_ambiguous else 0,
                 now,
+                task.link_url,
+                task.link_label,
             ),
         )
     return item_id
@@ -658,6 +689,35 @@ def replace_unconfirmed_items(screenshot_id: str, items: list[ExtractedItem]) ->
     )
 
 
+def replace_qr_codes(screenshot_id: str, codes: list[tuple[str, bool]]) -> None:
+    """Replace the QR readings stored for one screenshot. Payloads stay exact."""
+    now = utc_now()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM qr_codes WHERE screenshot_id = ?", (screenshot_id,))
+        for payload, readable in codes:
+            conn.execute(
+                """
+                INSERT INTO qr_codes (id, screenshot_id, payload, readable, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (new_id(), screenshot_id, payload, 1 if readable else 0, now),
+            )
+
+
+def list_qr_codes(screenshot_id: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, screenshot_id, payload, readable, created_at
+            FROM qr_codes
+            WHERE screenshot_id = ?
+            ORDER BY created_at, id
+            """,
+            (screenshot_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def approve_screenshot(
     screenshot_id: str,
     *,
@@ -667,6 +727,7 @@ def approve_screenshot(
     ambiguities: str | None,
     task_ids: list[str],
     task_titles: dict[str, str],
+    task_links: dict[str, tuple[str, str]] | None = None,
 ) -> None:
     """Save the screenshot title and category, then accept only the selected tasks."""
     if category not in CATEGORIES:
@@ -726,6 +787,24 @@ def approve_screenshot(
                 "UPDATE tasks SET status = 'accepted', title = ? WHERE id = ?",
                 (renamed[:200], task["id"]),
             )
+            chosen = (task_links or {}).get(task_id)
+            if chosen:
+                url, label = chosen
+                allowed = {
+                    row["payload"]
+                    for row in conn.execute(
+                        "SELECT payload FROM qr_codes WHERE screenshot_id = ? AND readable = 1",
+                        (screenshot_id,),
+                    )
+                }
+                if url in allowed:
+                    from app.qr import is_clickable_link
+
+                    if is_clickable_link(url):
+                        conn.execute(
+                            "UPDATE tasks SET link_url = ?, link_label = ? WHERE id = ? AND screenshot_id = ?",
+                            (url, (label or "Link from QR code.")[:80], task["id"], screenshot_id),
+                        )
         conn.execute(
             """
             UPDATE items

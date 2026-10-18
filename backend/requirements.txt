@@ -8,3 +8,5 @@ ollama==0.6.3
 pydantic==2.14.1
 httpx==0.28.1
 tzdata==2026.2
+opencv-python-headless==5.0.0.93
+numpy==2.5.4

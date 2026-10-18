@@ -23,6 +23,7 @@
       "bundler": "metro"
     },
     "plugins": [
+      "expo-router",
       "expo-font"
     ],
     "scheme": "pixie",
